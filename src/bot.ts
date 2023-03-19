@@ -65,13 +65,13 @@ export default class {
           }
 
           if (!interaction.guild) {
-            await interaction.reply(errorMsg('you can\'t use this bot in a DM'));
+            await interaction.reply(errorMsg('You can\'t use this bot in a DM'));
             return;
           }
 
           const requiresVC = command.requiresVC instanceof Function ? command.requiresVC(interaction) : command.requiresVC;
           if (requiresVC && interaction.member && !isUserInVoice(interaction.guild, interaction.member.user as User)) {
-            await interaction.reply({content: errorMsg('gotta be in a voice channel'), ephemeral: true});
+            await interaction.reply({content: errorMsg('Yo have to be in a voice channel'), ephemeral: true});
             return;
           }
 
@@ -113,7 +113,7 @@ export default class {
       }
     });
 
-    const spinner = ora('📡 connecting to Discord...').start();
+    const spinner = ora('Connecting to Discord...').start();
 
     this.client.once('ready', async () => {
       debug(generateDependencyReport());
@@ -121,13 +121,13 @@ export default class {
       // Update commands
       const rest = new REST({version: '10'}).setToken(this.config.DISCORD_TOKEN);
       if (this.shouldRegisterCommandsOnBot) {
-        spinner.text = '📡 updating commands on bot...';
+        spinner.text = 'Updating commands on bot...';
         await rest.put(
           Routes.applicationCommands(this.client.user!.id),
           {body: this.commandsByName.map(command => command.slashCommand.toJSON())},
         );
       } else {
-        spinner.text = '📡 updating commands in all guilds...';
+        spinner.text = 'Updating commands in all guilds...';
 
         await Promise.all([
           ...this.client.guilds.cache.map(async guild => {
