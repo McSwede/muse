@@ -57,16 +57,32 @@ export const buildPlayingMessageEmbed = (player: Player): EmbedBuilder => {
     throw new Error('No playing song found');
   }
 
+  const queuedSong = player
+      .getQueue()
+      .slice(0, 1)
+      .map((song, index) => {
+        const duration = song.isLive ? 'live' : prettyTime(song.length);
+
+        return `${getSongTitle(song, true)} \`[${duration}]\``;
+      })
+      .join('\n');
+
   const {artist, thumbnailUrl, requestedBy} = currentlyPlaying;
   const message = new EmbedBuilder();
+
+  let description = `**${getSongTitle(currentlyPlaying)}**\n`;
+  description += `Requested by: <@${requestedBy}>\n\n`;
+  description += `${getPlayerUI(player)}\n\n`;
+
+  if (player.getQueue().length > 0) {
+    description += '**Up next:**\n';
+    description += queuedSong;
+  }
+
   message
     .setColor(player.status === STATUS.PLAYING ? 'DarkGreen' : 'DarkRed')
     .setTitle(player.status === STATUS.PLAYING ? 'Now Playing' : 'Paused')
-    .setDescription(`
-      **${getSongTitle(currentlyPlaying)}**
-      Requested by: <@${requestedBy}>\n
-      ${getPlayerUI(player)}
-    `)
+    .setDescription(description)
     .setFooter({text: `Source: ${artist}`});
 
   if (thumbnailUrl) {
