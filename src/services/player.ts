@@ -550,9 +550,9 @@ export default class {
 
     if (newState.status === AudioPlayerStatus.Idle && this.status === STATUS.PLAYING) {
       await this.forward(1);
-      await this.currentChannel.send({
-        embeds: this.getCurrent() ? [buildPlayingMessageEmbed(this)]: [],
-      });
+      if (this.getCurrent()) { // this.getCurrent() !this.isQueueEmpty()
+        await this.currentChannel.send({ embeds: [buildPlayingMessageEmbed(this)] });
+      }
     }
   }
 
