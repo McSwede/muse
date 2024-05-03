@@ -4,13 +4,19 @@ import {inject, injectable} from 'inversify';
 import PlayerManager from '../managers/player.js';
 import Command from './index.js';
 import {SlashCommandBuilder} from '@discordjs/builders';
-import {buildPlayingMessageEmbed} from '../utils/build-embed.js';
 
 @injectable()
 export default class implements Command {
   public readonly slashCommand = new SlashCommandBuilder()
-    .setName('unskip')
-    .setDescription('Go back in the queue by one song');
+    .setName('volume')
+    .setDescription('set current player volume level')
+    .addIntegerOption(option =>
+      option.setName('level')
+        .setDescription('volume percentage (0 is muted, 100 is max & default)')
+        .setMinValue(0)
+        .setMaxValue(100)
+        .setRequired(true),
+    );
 
   public requiresVC = true;
 
@@ -23,14 +29,14 @@ export default class implements Command {
   public async execute(interaction: ChatInputCommandInteraction): Promise<void> {
     const player = this.playerManager.get(interaction.guild!.id);
 
-    try {
-      await player.back();
-      await interaction.reply({
-        content: 'Going back',
-        embeds: player.getCurrent() ? [buildPlayingMessageEmbed(player)] : [],
-      });
-    } catch (_: unknown) {
-      throw new Error('No song to go back to');
+    const currentSong = player.getCurrent();
+
+    if (!currentSong) {
+      throw new Error('nothing is playing');
     }
+
+    const level = interaction.options.getInteger('level') ?? 100;
+    player.setVolume(level);
+    await interaction.reply(`Set volume to ${level}%`);
   }
 }
