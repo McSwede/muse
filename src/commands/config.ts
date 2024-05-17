@@ -132,7 +132,7 @@ export default class implements Command {
           },
         });
 
-        await interaction.reply('👍 queue add notification setting updated');
+        await interaction.reply('Queue add notification setting updated');
 
         break;
       }
@@ -149,7 +149,7 @@ export default class implements Command {
           },
         });
 
-        await interaction.reply('👍 auto announce setting updated');
+        await interaction.reply('Auto announce setting updated');
 
         break;
       }
@@ -166,7 +166,7 @@ export default class implements Command {
           },
         });
 
-        await interaction.reply('👍 volume setting updated');
+        await interaction.reply('Volume setting updated');
 
         break;
       }

@@ -580,9 +580,9 @@ export default class {
       // Auto announce the next song if configured to
       const settings = await getGuildSettings(this.guildId);
       const {autoAnnounceNextSong} = settings;
-      if (autoAnnounceNextSong && this.currentChannel) {
+      if (autoAnnounceNextSong && this.currentChannel && this.getCurrent()) {
         await this.currentChannel.send({
-          embeds: this.getCurrent() ? [buildPlayingMessageEmbed(this)] : [],
+          embeds: [buildPlayingMessageEmbed(this)]
         });
       }
     }
