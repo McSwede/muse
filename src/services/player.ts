@@ -588,7 +588,7 @@ export default class {
       const {autoAnnounceNextSong} = settings;
       if (autoAnnounceNextSong && this.currentChannel && this.getCurrent()) {
         await this.currentChannel.send({
-          embeds: [buildPlayingMessageEmbed(this)]
+          embeds: [buildPlayingMessageEmbed(this)],
         });
       }
     }

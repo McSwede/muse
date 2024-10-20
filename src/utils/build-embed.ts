@@ -57,14 +57,13 @@ export const buildPlayingMessageEmbed = (player: Player): EmbedBuilder => {
   }
 
   const queuedSong = player
-      .getQueue()
-      .slice(0, 1)
-      .map((song, index) => {
-        const duration = song.isLive ? 'live' : prettyTime(song.length);
-
-        return `${getSongTitle(song, true)} \`[${duration}]\``;
-      })
-      .join('\n');
+    .getQueue()
+    .slice(0, 1)
+    .map((song) => {
+    const duration = song.isLive ? 'live' : prettyTime(song.length);
+      return `${getSongTitle(song, true)} \`[${duration}]\``;
+    })
+    .join('\n');
 
   const {artist, thumbnailUrl, requestedBy} = currentlyPlaying;
   const message = new EmbedBuilder();
