@@ -5,6 +5,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+- Improve YouTube format fetching fallback by retrying with both watch URL and video ID inputs.
+
+## [2.11.2] - 2026-03-29
+- Improve YouTube playback reliability by updating ytdl-core and normalizing getInfo input
 
 ## [2.11.1] - 2025-04-07
 - Revert Dockerfile to inherit dependencies image from base image
