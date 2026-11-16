@@ -5,7 +5,81 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [2.12.0] - 2026-10-30
+
+- Keep one shared player card per listening session, with the classic artwork, requester, source, progress bar, and upcoming songs. Move the card and its controls to the latest queue receipt in the session's text channel; older receipts keep their confirmation text.
+- Queue confirmations are now always public. Remove `set-queue-add-response-hidden`; previously saved values no longer apply. Keep the "u betcha" reply and use Discord's command header to identify the requester without an extra mention.
+- Add labeled Previous, −10s, Pause / Resume, +10s, Next, Queue, and Shuffle buttons. Previous and Next match `/unskip` and `/next`; use `/stop` to stop playback and disconnect.
+- Make the Queue button use the same display and configured page size as `/queue`, with page navigation when needed. Hide empty queue counts, duration, and page numbers on the player card.
+- Leave an ordered session recap when the queue ends, with no buttons. Mark skipped tracks, preserve repeat plays, and omit songs that never started. Show the full history in the channel, continuing in additional messages when needed.
+- Continue the same history when more music is added before disconnecting. Save session recaps and histories across restarts, marking unfinished playback as interrupted. Music and the queue do not resume automatically after a restart.
+- Update the timer every five seconds by default, with a smoother progress bar, and pause it with the music. Change the interval with `PLAYING_MESSAGE_UPDATE_INTERVAL_SECONDS` in `.env`, then restart Muse. Refresh volume, loop, and shuffle changes immediately, including while paused.
+- To change playback, require listeners to share Muse's voice channel and have permission to use the matching command. Preserve role, member, and channel restrictions; ignore the click if permissions cannot be checked. Button controls do not require Add Reactions or Manage Messages.
+- Handle quick clicks and message updates in order. Ignore stale controls and listeners who have left voice, stop updates after failed edits, remove controls when playback ends, and preserve recaps if playback finishes while a card is being sent.
+- Keep paused music paused when seeking, including while audio is buffering, and prevent an older seek from pausing newer playback. The seek buttons move ten seconds within a song and do not work on livestreams.
+- Redact interaction webhook tokens from playback message error logs.
+- Remove repeated songs when shuffling the upcoming queue, including songs already playing or played. Keep the current song and playback history in place. Playlist imports with shuffle enabled remove repeats within the import; different chapters and sources stay separate.
+- Validate extracted media formats before starting FFmpeg. Wait for the availability time reported by yt-dlp, then retry startup HTTP 403 failures after five and ten seconds. Cancelled playback cannot start FFmpeg after a wait or retry.
+- Resolve audio while the voice connection opens, and prefetch the next queued song's media URL during the current song's last minute to reduce startup and transition delays.
+- Keep the retained song available when the queue is cleared during a failed next or previous request. Allow queue looping to be turned off after upcoming songs are cleared or removed.
+- Keep configured bot status and activity when Discord reconnects.
+- Keep long search suggestions, stream URLs, and metadata within Discord's display limits without changing playback URLs. Validate favorite names and queries, and bound autocomplete and favorite lists without changing saved queries.
+- Stop loading YouTube playlist pages once enough playable tracks are found, counting split chapters toward the playlist limit. Limit concurrent video-detail requests to three across imports and lookups; temporary failures retain the HTTP client's retries, and daily API quota limits still apply.
+- Add a private `/help` command with command examples. Explain that favorites save named searches or URLs for the server, and that the queue-empty delay uses seconds with 0 disabling the timeout.
+- Fix fresh Node.js installs with compatible pagination and Node type dependencies.
+
+## [2.11.8] - 2026-09-20
+
+- Retry stalled initial voice handshakes within a bounded wait, share concurrent joins, and report the failed network phase without exposing voice credentials.
+- Connect before queueing new requests so failed voice joins do not leave unexpected tracks behind.
+- Handle Discord audio resource errors without crashing Muse and continue normal queue advancement.
+- Keep chapter and SponsorBlock cache boundaries separate so short cached excerpts cannot truncate full tracks. Existing audio caches refill as needed.
+- Apply SponsorBlock trimming within each chapter's original timestamps so split tracks play the correct audio.
+- Ignore stale listener-departure events after the voice connection or channel changes.
+- Prevent early YouTube playlist metadata failures from becoming unhandled rejections while later pages load.
+- Refresh expired metadata without racing concurrent requests to delete the same cache row.
+- Validate PR snapshot provenance before granting publishing access and restrict snapshot tags to the corresponding PR preview.
+- Resolve SoundCloud tracks, share links, and bounded playlists with yt-dlp instead of probing HTML pages as audio streams, and refresh media URLs when playback begins.
+
+## [2.11.7] - 2026-08-20
+
+- Detect FFmpeg failures before reporting playback as started, skip failed queued tracks instead of wedging the player, and retain bounded failure details in the container log.
+- Log failed Discord interactions with command and guild context so playback incidents can be diagnosed after the fact.
+
+## [2.11.6] - 2026-07-12
+
+- Add optional age-verified YouTube cookie-file support for age-restricted playback.
+- Fall back once to a closely matched audio-focused upload when a music video is age-restricted.
+- Prevent unavailable YouTube tracks and rejected automatic queue advances from restarting Muse.
+- Install current yt-dlp JavaScript challenge support and use the bundled Node.js runtime.
+- Fix provider routing and autocomplete allocation, playlist limits and pagination, and YouTube chapter parsing.
+- Fix queue command boundaries, queue insertion, and concurrent Player playback and voice-recovery transitions.
+- Correct SponsorBlock trimming and restore pre-duck volume after overlapping speakers finish.
+- Make cache writes safe under concurrent downloads, reconcile every indexed row, and reject negative cache limits.
+- Reject blank required credentials and honor explicit SQLite database paths during legacy migrations.
+- Add a Node.js behavior suite for commands, providers, queueing, playback, and caching.
+
+## [2.11.5] - 2026-06-04
+
+- Fix queue-empty crashes when auto-announce is enabled or playback ends without a next song.
+- Fix Spotify autocomplete and token refresh failures so Spotify API errors do not terminate the bot.
+- Harden release, PR snapshot, and `yt-dlp` refresh workflow maintenance.
+
+## [2.11.4] - 2026-04-26
+- Add optional `YT_DLP_AUTO_UPDATE` startup refresh support and startup `YT_DLP_VERSION` logging.
+- Add scheduled, manual, and release-triggered GHCR image refreshes for the latest `yt-dlp`.
+- Improve Docker `yt-dlp` path handling so bundled installs remain overrideable and updateable.
+- Restore PR snapshot image comments and artifact paths.
+- Refresh GitHub Actions runtimes.
+
+## [2.11.3] - 2026-04-24
 - Improve YouTube format fetching fallback by retrying with both watch URL and video ID inputs.
+- Improve YouTube playback reliability by resolving playable media URLs with `yt-dlp`.
+- Include `yt-dlp` in the Docker image and document `YT_DLP_PATH` for direct Node.js installs.
+- Improve Discord voice connection reliability by waiting for the voice connection to become ready before playback.
+- Upgrade `@discordjs/voice` to pick up current Discord voice transport support.
+- Avoid disconnecting during voice connection handshakes when guild voice state updates arrive.
 
 ## [2.11.2] - 2026-03-29
 - Improve YouTube playback reliability by updating ytdl-core and normalizing getInfo input
@@ -371,7 +445,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Initial release
 
-[unreleased]: https://github.com/museofficial/muse/compare/v2.11.1...HEAD
+[unreleased]: https://github.com/museofficial/muse/compare/v2.12.0...HEAD
+[2.12.0]: https://github.com/museofficial/muse/compare/v2.11.8...v2.12.0
+[2.11.8]: https://github.com/museofficial/muse/compare/v2.11.7...v2.11.8
+[2.11.7]: https://github.com/museofficial/muse/compare/v2.11.6...v2.11.7
+[2.11.6]: https://github.com/museofficial/muse/compare/v2.11.5...v2.11.6
+[2.11.5]: https://github.com/museofficial/muse/compare/v2.11.4...v2.11.5
+[2.11.4]: https://github.com/museofficial/muse/compare/v2.11.3...v2.11.4
+[2.11.3]: https://github.com/museofficial/muse/compare/v2.11.2...v2.11.3
+[2.11.2]: https://github.com/museofficial/muse/compare/v2.11.1...v2.11.2
 [2.11.1]: https://github.com/museofficial/muse/compare/v2.11.0...v2.11.1
 [2.11.0]: https://github.com/museofficial/muse/compare/v2.10.1...v2.11.0
 [2.10.1]: https://github.com/museofficial/muse/compare/v2.10.0...v2.10.1

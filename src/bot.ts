@@ -14,6 +14,27 @@ import {generateDependencyReport} from '@discordjs/voice';
 import {REST} from '@discordjs/rest';
 import {Routes} from 'discord-api-types/v10';
 import registerCommandsOnGuild from './utils/register-commands-on-guild.js';
+import {BOT_INVITE_PERMISSIONS} from './utils/constants.js';
+import type SessionPlayer from './services/session-player.js';
+import {SESSION_BUTTON_PREFIX} from './utils/build-session-message.js';
+
+const sanitizeErrorDetail = (error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error);
+  return message
+    .replace(/https?:\/\/\S+/gi, '[URL]')
+    .replace(/(["']?\b(?:api[-_]?key|key|token|authorization|cookie)["']?\s*[:=]\s*)(?:["'][^"']*["']|Bearer\s+[^,;\s]+|[^,;\s}\]]+)/gi, '$1[redacted]')
+    .replace(/\b(authorization|cookie)\s*[:=]\s*[^\r\n]*/gi, '$1: [redacted]')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 500);
+};
+
+const sanitizeErrorForLog = (error: unknown) => {
+  const name = error instanceof Error ? error.name : 'Error';
+  const detail = sanitizeErrorDetail(error);
+
+  return `${name}: ${detail || 'unknown error'}`;
+};
 
 @injectable()
 export default class {
@@ -32,6 +53,8 @@ export default class {
   }
 
   public async register(): Promise<void> {
+    // Close persisted sessions before login, before Discord can deliver /play.
+    await container.get<SessionPlayer>(TYPES.Services.SessionPlayer).prepareRecovery();
     // Load in commands
     for (const command of container.getAll<Command>(TYPES.Command)) {
       // Make sure we can serialize to JSON without errors
@@ -52,6 +75,8 @@ export default class {
         }
       }
     }
+
+    this.commandsByName.get('help')?.setCommands?.([...this.commandsByName.values()]);
 
     // Register event handlers
     // eslint-disable-next-line complexity
@@ -79,6 +104,11 @@ export default class {
             await command.execute(interaction);
           }
         } else if (interaction.isButton()) {
+          if (interaction.customId.startsWith(SESSION_BUTTON_PREFIX)) {
+            await container.get<SessionPlayer>(TYPES.Services.SessionPlayer).handleButton(interaction);
+            return;
+          }
+
           const command = this.commandsByButtonId.get(interaction.customId);
 
           if (!command) {
@@ -100,14 +130,22 @@ export default class {
           }
         }
       } catch (error: unknown) {
-        debug(error);
+        const sanitizedError = sanitizeErrorForLog(error);
+        debug(sanitizedError);
+        const interactionName = interaction.isCommand() || interaction.isAutocomplete()
+          ? `/${interaction.commandName}`
+          : interaction.isButton()
+            ? `button:${interaction.customId}`
+            : interaction.type.toString();
+        console.error(`Discord interaction failed (${interactionName}, guild=${interaction.guildId ?? 'dm'}, channel=${interaction.channelId ?? 'unknown'}, user=${interaction.user.id}): ${sanitizedError}`);
+        const userSafeError = new Error(sanitizeErrorDetail(error));
 
         // This can fail if the message was deleted, and we don't want to crash the whole bot
         try {
           if ((interaction.isCommand() || interaction.isButton()) && (interaction.replied || interaction.deferred)) {
-            await interaction.editReply(errorMsg(error as Error));
+            await interaction.editReply(errorMsg(userSafeError));
           } else if (interaction.isCommand() || interaction.isButton()) {
-            await interaction.reply({content: errorMsg(error as Error), ephemeral: true});
+            await interaction.reply({content: errorMsg(userSafeError), ephemeral: true});
           }
         } catch {}
       }
@@ -115,8 +153,25 @@ export default class {
 
     const spinner = ora('Connecting to Discord...').start();
 
+    const presence = {
+      activities: [{
+        name: this.config.BOT_ACTIVITY,
+        type: this.config.BOT_ACTIVITY_TYPE,
+        url: this.config.BOT_ACTIVITY_URL === '' ? undefined : this.config.BOT_ACTIVITY_URL,
+      }],
+      status: this.config.BOT_STATUS,
+    };
+
     this.client.once('ready', async () => {
       debug(generateDependencyReport());
+
+      try {
+        await container.get<SessionPlayer>(TYPES.Services.SessionPlayer).recover(this.client);
+      } catch (error: unknown) {
+        console.error(`Listening-session recovery failed: ${sanitizeErrorForLog(error)}`);
+        this.client.destroy();
+        return;
+      }
 
       // Update commands
       const rest = new REST({version: '10'}).setToken(this.config.DISCORD_TOKEN);
@@ -144,18 +199,9 @@ export default class {
         );
       }
 
-      this.client.user!.setPresence({
-        activities: [
-          {
-            name: this.config.BOT_ACTIVITY,
-            type: this.config.BOT_ACTIVITY_TYPE,
-            url: this.config.BOT_ACTIVITY_URL === '' ? undefined : this.config.BOT_ACTIVITY_URL,
-          },
-        ],
-        status: this.config.BOT_STATUS,
-      });
+      this.client.user!.setPresence(presence);
 
-      spinner.succeed(`Ready! Invite the bot with https://discordapp.com/oauth2/authorize?client_id=${this.client.user?.id ?? ''}&scope=bot%20applications.commands&permissions=36700160`);
+      spinner.succeed(`Ready! Invite the bot with https://discordapp.com/oauth2/authorize?client_id=${this.client.user?.id ?? ''}&scope=bot%20applications.commands&permissions=${BOT_INVITE_PERMISSIONS}`);
     });
 
     this.client.on('error', console.error);
@@ -163,6 +209,8 @@ export default class {
 
     this.client.on('guildCreate', handleGuildCreate);
     this.client.on('voiceStateUpdate', handleVoiceStateUpdate);
+    // Discord reuses login presence when a reconnect requires a new Identify.
+    this.client.options.presence = presence;
     await this.client.login();
   }
 }

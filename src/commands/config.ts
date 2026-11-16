@@ -34,13 +34,6 @@ export default class implements Command {
         .setDescription('Whether to leave when everyone else leaves')
         .setRequired(true)))
     .addSubcommand(subcommand => subcommand
-      .setName('set-queue-add-response-hidden')
-      .setDescription('set whether bot responses to queue additions are only displayed to the requester')
-      .addBooleanOption(option => option
-        .setName('value')
-        .setDescription('whether bot responses to queue additions are only displayed to the requester')
-        .setRequired(true)))
-    .addSubcommand(subcommand => subcommand
       .setName('set-reduce-vol-when-voice')
       .setDescription('set whether to turn down the volume when people speak')
       .addBooleanOption(option => option
@@ -259,10 +252,10 @@ export default class implements Command {
             : `${config.secondsToWaitAfterQueueEmpties}s`,
           'Leave if there are no listeners': config.leaveIfNoListeners ? 'yes' : 'no',
           'Auto announce next song in queue': config.autoAnnounceNextSong ? 'yes' : 'no',
-          'Add to queue reponses show for requester only': config.autoAnnounceNextSong ? 'yes' : 'no',
           'Default Volume': config.defaultVolume,
           'Default queue page size': config.defaultQueuePageSize,
           'Reduce volume when people speak': config.turnDownVolumeWhenPeopleSpeak ? 'yes' : 'no',
+          'Reduce volume when people speak target': config.turnDownVolumeWhenPeopleSpeakTarget,
         };
 
         let description = '';

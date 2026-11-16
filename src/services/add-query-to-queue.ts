@@ -1,18 +1,29 @@
-/* eslint-disable complexity */
-import {ChatInputCommandInteraction, GuildMember} from 'discord.js';
+import {ChatInputCommandInteraction, GuildMember, GuildTextBasedChannel, escapeMarkdown} from 'discord.js';
 import {inject, injectable} from 'inversify';
 import shuffle from 'array-shuffle';
+import uniqueSongs from '../utils/unique-songs.js';
 import {TYPES} from '../types.js';
 import GetSongs from '../services/get-songs.js';
 import {MediaSource, SongMetadata, STATUS} from './player.js';
+import SessionPlayer from './session-player.js';
 import PlayerManager from '../managers/player.js';
-import {buildPlayingMessageEmbed} from '../utils/build-embed.js';
 import {getMemberVoiceChannel, getMostPopularVoiceChannel} from '../utils/channels.js';
 import {getGuildSettings} from '../utils/get-guild-settings.js';
 import {SponsorBlock} from 'sponsorblock-api';
 import Config from './config.js';
 import KeyValueCacheProvider from './key-value-cache.js';
 import {ONE_HOUR_IN_SECONDS} from '../utils/constants.js';
+import formatSongReply from '../utils/format-song-reply.js';
+
+const isSameQueueEntry = (capturedId: number | null, currentId: number | null) => (
+  capturedId !== null && capturedId === currentId
+);
+
+const normalizeSkipError = (error: unknown) => (
+  error instanceof Error && error.message === 'No songs in queue to forward to.'
+    ? new Error('no song to skip to')
+    : error
+);
 
 @injectable()
 export default class AddQueryToQueue {
@@ -24,7 +35,8 @@ export default class AddQueryToQueue {
   constructor(@inject(TYPES.Services.GetSongs) private readonly getSongs: GetSongs,
     @inject(TYPES.Managers.Player) private readonly playerManager: PlayerManager,
     @inject(TYPES.Config) private readonly config: Config,
-    @inject(TYPES.KeyValueCache) cache: KeyValueCacheProvider) {
+    @inject(TYPES.KeyValueCache) cache: KeyValueCacheProvider,
+    @inject(TYPES.Services.SessionPlayer) private readonly sessionPlayer: SessionPlayer) {
     this.sponsorBlockTimeoutDelay = config.SPONSORBLOCK_TIMEOUT;
     this.sponsorBlock = config.ENABLE_SPONSORBLOCK
       ? new SponsorBlock('muse-sb-integration') // UserID matters only for submissions
@@ -49,15 +61,16 @@ export default class AddQueryToQueue {
   }): Promise<void> {
     const guildId = interaction.guild!.id;
     const player = this.playerManager.get(guildId);
-    const wasPlayingSong = player.getCurrent() !== null;
+    const currentQueueEntryId = player.getCurrentQueueEntryId();
+    const wasPlayingSong = currentQueueEntryId !== null;
 
     const [targetVoiceChannel] = getMemberVoiceChannel(interaction.member as GuildMember) ?? getMostPopularVoiceChannel(interaction.guild!);
 
     const settings = await getGuildSettings(guildId);
 
-    const {playlistLimit, queueAddResponseEphemeral} = settings;
+    const {playlistLimit} = settings;
 
-    await interaction.deferReply({ephemeral: queueAddResponseEphemeral});
+    await interaction.deferReply({ephemeral: false});
 
     let [newSongs, extraMsg] = await this.getSongs.getSongs(query, playlistLimit, shouldSplitChapters);
 
@@ -66,68 +79,91 @@ export default class AddQueryToQueue {
     }
 
     if (shuffleAdditions) {
-      newSongs = shuffle(newSongs);
+      newSongs = shuffle(uniqueSongs(newSongs));
     }
 
     if (this.config.ENABLE_SPONSORBLOCK) {
       newSongs = await Promise.all(newSongs.map(this.skipNonMusicSegments.bind(this)));
     }
 
-    newSongs.forEach(song => {
-      player.add({
-        ...song,
-        addedInChannelId: interaction.channel!.id,
-        requestedBy: interaction.member!.user.id,
-      }, {immediate: addToFrontOfQueue ?? false});
+    const queuedSongs = newSongs.map(song => ({
+      ...song,
+      addedInChannelId: interaction.channel!.id,
+      requestedBy: interaction.member!.user.id,
+    }));
+    const needsConnection = player.voiceConnection === null;
+    if (needsConnection) {
+      // A failed join must not leave an unacknowledged request in the queue.
+      // Resolve audio during the handshake without changing the saved queue.
+      const connection = player.connect(targetVoiceChannel);
+      player.prepareAudio(player.getCurrent() ?? queuedSongs[0]);
+      await connection;
+    } else {
+      // Let an existing session recover without changing its channel or paused state.
+      await player.ensureVoiceConnectionReady();
+    }
+
+    queuedSongs.forEach((song, index) => {
+      player.add(song, {immediate: addToFrontOfQueue, immediateOffset: index});
     });
 
     const firstSong = newSongs[0];
 
     let statusMsg = '';
 
-    if (player.voiceConnection === null) {
-      await player.connect(targetVoiceChannel);
-
+    if (needsConnection) {
       // Resume / start playback
       await player.play();
 
       if (wasPlayingSong) {
         statusMsg = 'Resuming playback';
       }
-
-      await interaction.editReply({
-        embeds: [buildPlayingMessageEmbed(player)],
-      });
     } else if (player.status === STATUS.IDLE) {
       // Player is idle, start playback instead
       await player.play();
     }
 
-    if (skipCurrentTrack) {
+    if (!player.getCurrent()) {
+      throw new Error('no playable songs found');
+    }
+
+    let didSkipCurrentTrack = false;
+    if (skipCurrentTrack && isSameQueueEntry(currentQueueEntryId, player.getCurrentQueueEntryId())) {
       try {
         await player.forward(1);
-      } catch (_: unknown) {
-        throw new Error('no song to skip to');
+        didSkipCurrentTrack = true;
+      } catch (error: unknown) {
+        throw normalizeSkipError(error);
       }
     }
 
-    // Build response message
-    if (statusMsg !== '') {
-      if (extraMsg === '') {
-        extraMsg = statusMsg;
-      } else {
-        extraMsg = `${statusMsg}, ${extraMsg}`;
-      }
-    }
-
+    extraMsg = [statusMsg, extraMsg].filter(Boolean).join(', ');
     if (extraMsg !== '') {
       extraMsg = ` (${extraMsg})`;
     }
 
-    if (newSongs.length === 1) {
-      await interaction.editReply(`**${firstSong.title}** added to the${addToFrontOfQueue ? ' front of the' : ''} queue${skipCurrentTrack ? 'and current track skipped' : ''}${extraMsg}`);
-    } else {
-      await interaction.editReply(`**${firstSong.title}** and ${newSongs.length - 1} other songs were added to the queue${skipCurrentTrack ? 'and current track skipped' : ''}${extraMsg}`);
+    const title = escapeMarkdown(firstSong.title);
+    const responseContent = (publicationWarning = '') => {
+      const suffix = `${didSkipCurrentTrack ? ' and current track skipped' : ''}${extraMsg}${publicationWarning}`;
+      return newSongs.length === 1
+        ? formatSongReply(title, 'u betcha, **', `** added to the${addToFrontOfQueue ? ' front of the' : ''} queue${suffix}`)
+        : formatSongReply(title, 'u betcha, **', `** and ${newSongs.length - 1} other songs were added to the queue${suffix}`);
+    };
+
+    const receipt = interaction.editReply({content: responseContent(), allowedMentions: {parse: []}});
+    // Capture this session before the reply resolves, so a delayed Discord
+    // response cannot move a later session's player onto an older request.
+    const publication = this.sessionPlayer.attachToReply(player, interaction.channel as GuildTextBasedChannel, receipt).then(() => '', () => {
+      // The tracks have already been added. A Discord/persistence failure must
+      // not make the requester retry and accidentally enqueue them twice.
+      console.warn(`Could not publish the session player for guild ${guildId}.`);
+      return '\nThe player card could not be shown. Check my channel permissions, then use /now-playing.';
+    });
+
+    await receipt;
+    const publicationWarning = await publication;
+    if (publicationWarning) {
+      await interaction.editReply({content: responseContent(publicationWarning), allowedMentions: {parse: []}});
     }
   }
 
@@ -147,13 +183,16 @@ export default class AddQueryToQueue {
           expiresIn: ONE_HOUR_IN_SECONDS,
         },
       ) ?? [];
+      const originalStart = song.offset;
+      const originalEnd = song.offset + song.length;
       const skipSegments = segments
+        .filter(({startTime, endTime}) => endTime > originalStart && startTime < originalEnd)
         .sort((a, b) => a.startTime - b.startTime)
         .reduce((acc: Array<{startTime: number; endTime: number}>, {startTime, endTime}) => {
           const previousSegment = acc[acc.length - 1];
           // If segments overlap merge
           if (previousSegment && previousSegment.endTime > startTime) {
-            acc[acc.length - 1].endTime = endTime;
+            acc[acc.length - 1].endTime = Math.max(previousSegment.endTime, endTime);
           } else {
             acc.push({startTime, endTime});
           }
@@ -163,14 +202,16 @@ export default class AddQueryToQueue {
 
       const intro = skipSegments[0];
       const outro = skipSegments.at(-1);
-      if (outro && outro?.endTime >= song.length - 2) {
-        song.length -= outro.endTime - outro.startTime;
-      }
-
-      if (intro?.startTime <= 2) {
-        song.offset = Math.floor(intro.endTime);
-        song.length -= song.offset;
-      }
+      // SponsorBlock timestamps refer to the full source, including when this
+      // queue entry is only a chapter. Clamp both trims to that entry's interval.
+      const start = intro && intro.startTime <= originalStart + 2
+        ? Math.min(originalEnd, Math.max(originalStart, Math.floor(intro.endTime)))
+        : originalStart;
+      const end = outro && outro.endTime >= originalEnd - 2
+        ? Math.max(start, Math.min(originalEnd, outro.startTime))
+        : originalEnd;
+      song.offset = start;
+      song.length = Math.max(0, end - start);
 
       return song;
     } catch (e) {

@@ -15,6 +15,7 @@ export default class implements Command {
     .addIntegerOption(option => option
       .setName('page')
       .setDescription('Page of queue to show [default: 1]')
+      .setMinValue(1)
       .setRequired(false))
     .addIntegerOption(option => option
       .setName('page-size')
@@ -42,6 +43,6 @@ export default class implements Command {
       pageSize,
     );
 
-    await interaction.reply({embeds: [embed]});
+    await interaction.reply({embeds: [embed], ephemeral: true});
   }
 }

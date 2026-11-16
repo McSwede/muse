@@ -1,14 +1,26 @@
 FROM node:22-bookworm-slim AS base
 
+ARG YT_DLP_VERSION=
+ENV MUSE_BUNDLED_YT_DLP_PATH=/opt/yt-dlp/bin/yt-dlp
+
 # openssl will be a required package if base is updated to 18.16+ due to node:*-slim base distro change
 # https://github.com/prisma/prisma/issues/19729#issuecomment-1591270599
-# Install ffmpeg
+# Install ffmpeg and yt-dlp runtime dependencies
 RUN apt-get update \
     && apt-get install --no-install-recommends -y \
     ffmpeg \
     tini \
     openssl \
     ca-certificates \
+    python3 \
+    python3-venv \
+    && python3 -m venv /opt/yt-dlp \
+    && if [ -n "${YT_DLP_VERSION}" ]; then \
+        /opt/yt-dlp/bin/pip install --no-cache-dir "yt-dlp[default]==${YT_DLP_VERSION}"; \
+    else \
+        /opt/yt-dlp/bin/pip install --no-cache-dir "yt-dlp[default]"; \
+    fi \
+    && ln -s /opt/yt-dlp/bin/yt-dlp /usr/local/bin/yt-dlp \
     && apt-get autoclean \
     && apt-get autoremove \
     && rm -rf /var/lib/apt/lists/*
@@ -21,7 +33,6 @@ WORKDIR /usr/app
 # Add Python and build tools to compile native modules
 RUN apt-get update \
     && apt-get install --no-install-recommends -y \
-    python3 \
     python-is-python3 \
     build-essential \
     && apt-get autoclean \

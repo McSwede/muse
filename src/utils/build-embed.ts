@@ -1,6 +1,7 @@
 import getYouTubeID from 'get-youtube-id';
 import {EmbedBuilder} from 'discord.js';
-import Player, {MediaSource, QueuedSong, STATUS} from '../services/player.js';
+import type Player from '../services/player.js';
+import {MediaSource, STATUS, type QueuedSong} from '../services/player-types.js';
 import getProgressBar from './get-progress-bar.js';
 import {prettyTime} from './time.js';
 import {truncate} from './string.js';
@@ -12,16 +13,25 @@ const getMaxSongTitleLength = (title: string) => {
 };
 
 const getSongTitle = ({title, url, offset, source}: QueuedSong, shouldTruncate = false) => {
-  if (source === MediaSource.HLS) {
-    return `[${title}](${url})`;
+  const cleanSongTitle = source === MediaSource.HLS ? title : title.replace(/\[.*\]/, '').trim();
+  const songTitle = truncate(cleanSongTitle, shouldTruncate ? getMaxSongTitleLength(cleanSongTitle) : 256);
+
+  if (source === MediaSource.SoundCloud || source === MediaSource.HLS) {
+    // Keep long share parameters in the playable URL without overflowing Discord embeds.
+    return url.length > 1024 ? songTitle : `[${songTitle}](${url})`;
   }
 
-  const cleanSongTitle = title.replace(/\[.*\]/, '').trim();
-
-  const songTitle = shouldTruncate ? truncate(cleanSongTitle, getMaxSongTitleLength(cleanSongTitle)) : cleanSongTitle;
   const youtubeId = url.length === 11 ? url : getYouTubeID(url) ?? '';
 
   return `[${songTitle}](https://www.youtube.com/watch?v=${youtubeId}${offset === 0 ? '' : '&t=' + String(offset)})`;
+};
+
+const setBoundedFooter = (message: EmbedBuilder, text: string) => {
+  const {title = '', description = '', fields = []} = message.data;
+  const contentLength = title.length + description.length
+    + fields.reduce((total, field) => total + field.name.length + field.value.length, 0);
+  // Discord also limits the combined text of an embed to 6000 characters.
+  message.setFooter({text: truncate(text, Math.min(2048, 6000 - contentLength))});
 };
 
 const getQueueInfo = (player: Player) => {
@@ -42,10 +52,14 @@ const getPlayerUI = (player: Player) => {
 
   const position = player.getPosition();
   const button = player.status === STATUS.PLAYING ? '⏹️' : '▶️';
-  const progressBar = getProgressBar(10, position / song.length);
+  // Ninety-one narrow rail positions fit in about the same visual width as the
+  // original ten-glyph bar, while allowing five-second motion on most songs.
+  const progressBar = getProgressBar(91, position / song.length);
   const elapsedTime = song.isLive ? 'live' : `${prettyTime(position)}/${prettyTime(song.length)}`;
   const loop = player.loopCurrentSong ? '🔂' : player.loopCurrentQueue ? '🔁' : '';
   const vol: string = typeof player.getVolume() === 'number' ? `${player.getVolume()!}%` : '';
+  // Keep the slider outside inline code so Discord renders its emoji and rail
+  // graphically, matching the original Muse playback UI.
   return `${button} ${progressBar} \`[${elapsedTime}]\`🔉 ${vol} ${loop}`;
 };
 
@@ -80,8 +94,12 @@ export const buildPlayingMessageEmbed = (player: Player): EmbedBuilder => {
   message
     .setColor(player.status === STATUS.PLAYING ? 'DarkGreen' : 'DarkRed')
     .setTitle(player.status === STATUS.PLAYING ? 'Now Playing' : 'Paused')
-    .setDescription(description)
-    .setFooter({text: `Source: ${artist}`});
+    .setDescription(`
+      **${getSongTitle(currentlyPlaying)}**
+      Requested by: <@${requestedBy}>\n
+      ${getPlayerUI(player)}
+    `);
+  setBoundedFooter(message, `Source: ${artist}`);
 
   if (thumbnailUrl) {
     message.setThumbnail(thumbnailUrl);
@@ -91,6 +109,10 @@ export const buildPlayingMessageEmbed = (player: Player): EmbedBuilder => {
 };
 
 export const buildQueueEmbed = (player: Player, page: number, pageSize: number): EmbedBuilder => {
+  if (page < 1) {
+    throw new Error('page must be at least 1');
+  }
+
   const currentlyPlaying = player.getCurrent();
 
   if (!currentlyPlaying) {
@@ -98,7 +120,7 @@ export const buildQueueEmbed = (player: Player, page: number, pageSize: number):
   }
 
   const queueSize = player.queueSize();
-  const maxQueuePage = Math.ceil((queueSize + 1) / pageSize);
+  const maxQueuePage = Math.max(1, Math.ceil(queueSize / pageSize));
 
   if (page > maxQueuePage) {
     throw new Error('The queue isn\'t that big');
@@ -114,8 +136,7 @@ export const buildQueueEmbed = (player: Player, page: number, pageSize: number):
       const duration = song.isLive ? 'live' : prettyTime(song.length);
 
       return `\`${songNumber}.\` ${getSongTitle(song, true)} \`[${duration}]\``;
-    })
-    .join('\n');
+    });
 
   const {artist, thumbnailUrl, playlist, requestedBy} = currentlyPlaying;
   const playlistTitle = playlist ? `(${playlist.title})` : '';
@@ -129,7 +150,16 @@ export const buildQueueEmbed = (player: Player, page: number, pageSize: number):
 
   if (player.getQueue().length > 0) {
     description += '**Up next:**\n';
-    description += queuedSongs;
+    for (const [index, song] of queuedSongs.entries()) {
+      // Leave room for a useful hint instead of rejecting the entire /queue response.
+      const overflowMessage = `… ${queuedSongs.length - index} more on this page; use a smaller page-size to view them.`;
+      if (description.length + song.length + 1 + overflowMessage.length > 4096) {
+        description += overflowMessage;
+        break;
+      }
+
+      description += `${song}\n`;
+    }
   }
 
   message
@@ -138,8 +168,8 @@ export const buildQueueEmbed = (player: Player, page: number, pageSize: number):
     .setDescription(description)
     .addFields([{name: 'In queue', value: getQueueInfo(player), inline: true}, {
       name: 'Total length', value: `${totalLength > 0 ? prettyTime(totalLength) : '-'}`, inline: true,
-    }, {name: 'Page', value: `${page} out of ${maxQueuePage}`, inline: true}])
-    .setFooter({text: `Source: ${artist} ${playlistTitle}`});
+    }, {name: 'Page', value: `${page} out of ${maxQueuePage}`, inline: true}]);
+  setBoundedFooter(message, `Source: ${artist} ${playlistTitle}`);
 
   if (thumbnailUrl) {
     message.setThumbnail(thumbnailUrl);
@@ -147,4 +177,3 @@ export const buildQueueEmbed = (player: Player, page: number, pageSize: number):
 
   return message;
 };
-

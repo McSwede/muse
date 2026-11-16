@@ -4,7 +4,6 @@ import {inject, injectable} from 'inversify';
 import PlayerManager from '../managers/player.js';
 import Command from './index.js';
 import {SlashCommandBuilder} from '@discordjs/builders';
-import {buildPlayingMessageEmbed} from '../utils/build-embed.js';
 
 @injectable()
 export default class implements Command {
@@ -32,15 +31,17 @@ export default class implements Command {
     }
 
     const player = this.playerManager.get(interaction.guild!.id);
+    await interaction.deferReply({ephemeral: true});
 
     try {
       await player.forward(numToSkip);
-      await interaction.reply({
-        content: 'Skipping',
-        embeds: player.getCurrent() ? [buildPlayingMessageEmbed(player)] : [],
-      });
-    } catch (_: unknown) {
-      throw new Error('No song to skip to');
+      await interaction.editReply(player.getCurrent() ? 'Skipped.' : 'Queue complete.');
+    } catch (error: unknown) {
+      if (error instanceof Error && error.message === 'No songs in queue to forward to.') {
+        throw new Error('No song to skip to');
+      }
+
+      throw error;
     }
   }
 }

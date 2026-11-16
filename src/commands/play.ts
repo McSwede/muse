@@ -6,10 +6,11 @@ import Spotify from 'spotify-web-api-node';
 import Command from './index.js';
 import {TYPES} from '../types.js';
 import ThirdParty from '../services/third-party.js';
-import getYouTubeAndSpotifySuggestionsFor from '../utils/get-youtube-and-spotify-suggestions-for.js';
+import getYouTubeAndSpotifySuggestionsFor, {SpotifySuggestionsUnavailableError} from '../utils/get-youtube-and-spotify-suggestions-for.js';
 import KeyValueCacheProvider from '../services/key-value-cache.js';
 import {ONE_HOUR_IN_SECONDS} from '../utils/constants.js';
 import AddQueryToQueue from '../services/add-query-to-queue.js';
+import {truncate} from '../utils/string.js';
 
 @injectable()
 export default class implements Command {
@@ -73,24 +74,43 @@ export default class implements Command {
       return;
     }
 
+    let queryProtocol: string | undefined;
     try {
-      // Don't return suggestions for URLs
-      // eslint-disable-next-line no-new
-      new URL(query);
-      await interaction.respond([]);
-      return;
+      queryProtocol = new URL(query).protocol;
     } catch {}
 
-    const suggestions = await this.cache.wrap(
-      getYouTubeAndSpotifySuggestionsFor,
-      query,
-      this.spotify,
-      10,
-      {
-        expiresIn: ONE_HOUR_IN_SECONDS,
-        key: `autocomplete:${query}`,
-      });
+    // Don't return suggestions for supported provider URLs
+    if (queryProtocol && ['http:', 'https:', 'spotify:'].includes(queryProtocol)) {
+      await interaction.respond([]);
+      return;
+    }
 
-    await interaction.respond(suggestions);
+    let suggestions;
+
+    try {
+      suggestions = await this.cache.wrap(
+        getYouTubeAndSpotifySuggestionsFor,
+        query,
+        this.spotify,
+        10,
+        {
+          expiresIn: ONE_HOUR_IN_SECONDS,
+          key: `autocomplete:${query}`,
+        });
+    } catch (error: unknown) {
+      if (error instanceof SpotifySuggestionsUnavailableError) {
+        suggestions = error.suggestions;
+      } else {
+        throw error;
+      }
+    }
+
+    // Normalize after reading the cache or fallback so old results obey Discord's limits too.
+    const choices = suggestions
+      .filter(({name, value}) => name.length > 0 && (typeof value !== 'string' || value.length <= 100))
+      .slice(0, 25)
+      .map(choice => ({...choice, name: truncate(choice.name, 100)}));
+
+    await interaction.respond(choices);
   }
 }
