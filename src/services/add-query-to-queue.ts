@@ -146,8 +146,8 @@ export default class AddQueryToQueue {
     const responseContent = (publicationWarning = '') => {
       const suffix = `${didSkipCurrentTrack ? ' and current track skipped' : ''}${extraMsg}${publicationWarning}`;
       return newSongs.length === 1
-        ? formatSongReply(title, 'u betcha, **', `** added to the${addToFrontOfQueue ? ' front of the' : ''} queue${suffix}`)
-        : formatSongReply(title, 'u betcha, **', `** and ${newSongs.length - 1} other songs were added to the queue${suffix}`);
+        ? formatSongReply(title, '**', `** added to the${addToFrontOfQueue ? ' front of the' : ''} queue${suffix}`)
+        : formatSongReply(title, '**', `** and ${newSongs.length - 1} other songs were added to the queue${suffix}`);
     };
 
     const receipt = interaction.editReply({content: responseContent(), allowedMentions: {parse: []}});
